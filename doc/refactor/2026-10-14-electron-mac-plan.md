@@ -13,7 +13,7 @@
 
 **技术栈：** Electron、React、TypeScript、Vite（界面）、esbuild（main/preload/worker）、@electron/packager、@electron/fuses、Node 内置 SQLite、Swift 原生监听器、launchd、Vitest、Playwright Electron 测试。
 
-**规格：** [重构方案](2026-10-14-electron-mac-spec.md)。[各轮评审及修订原因](2026-10-14-electron-mac-self-review.md)。考勤规则按现行[业务规格](../spec.md)保留；桌面生命周期和分发方式按新的重构方案执行。
+**规格：** [重构方案](2026-10-14-electron-mac-spec.md)。[各轮评审及修订原因](2026-10-14-electron-mac-self-review.md)。[任务 1 打包验证记录](desktop-spike.md)，本计划已按其结论修订。考勤规则按现行[业务规格](../spec.md)保留；桌面生命周期和分发方式按新的重构方案执行。
 
 ## 全局约束
 
@@ -30,15 +30,18 @@
 - 退出考勤界面后，后台仍采集，菜单栏显示状态并提供停止入口。
 - × 仅隐藏窗口并保留草稿；⌘Q 仅退出界面；“停止后台采集”只停止后台并移除登录启动，不关闭界面。
 - 后台未启用、已停止或被系统关闭时，界面仍可设置、核对、复制和导出。
+- 后台在系统设置中被关闭时（启动项文件在、任务未加载），应用不自行重新加载，只提供系统设置入口。
 - 定时维护在界面或后台任一运行时执行，按租约协调；两者都没运行的日子，下一次启动时补跑。
 
 **数据库与事件**
 
 - 数据库允许 gui 与 agent 的两个工作进程同时连接，沿用 WAL、`busy_timeout`、`BEGIN IMMEDIATE` 迁移和维护租约。不新增独立事件日志、操作回执或进程间常驻通信。
+- 打开数据库：先设置 `busy_timeout`，再切换 `journal_mode=WAL`；切换遇到 `SQLITE_BUSY` 时由程序退避重试（等锁时间对它无效）。
 - 事务边界：
   - 先读后写的操作必须在 `BEGIN IMMEDIATE` 写事务中完成。
   - 以 `InTx` 结尾的函数只在调用方已持有事务时使用，自身不开启事务；公开函数各自开启事务，不互相嵌套。
   - 事务内不生成 Excel，也不做其他耗时 IO。
+  - pmset 补齐、维护等批量写入拆成多个短事务，单个事务的耗时远小于 `busy_timeout`，避免另一方一直等不到写锁。
 - 采集事件直接写入数据库，采集连接使用 `synchronous=FULL`；遇到 `SQLITE_BUSY` 时退避重试，不丢弃事件。停机期间的电源事件由 pmset 补齐；网络不靠历史猜测。
 - 复制邮件前在工作进程中校验完整快照版本；导出在生成前和登记／锁定前各校验一次。版本覆盖记录、资料、模板、规则与提交限制。
 - 工作进程超时或崩溃后，必须确认旧进程已经退出，才能启动新进程并重新读取。
@@ -59,6 +62,7 @@
 **开发与测试**
 
 - 开发和测试使用隔离数据目录和独立启动项标签。维护者的正式服务只在任务 10 明确迁移时停止。
+- 开发用 Node 24.21.0（与 Electron 内置版本一致），由 nvm 和仓库的 `.nvmrc` 切换。维护者新开的 shell 默认仍是 Homebrew 的 node@22，旧部署不受影响。
 - 默认按任务编号顺序施工。
 
 ## 验收最容易遗漏的情况
@@ -66,6 +70,7 @@
 | 情况 | 用户应看到的行为 | 负责的任务 |
 | --- | --- | --- |
 | 界面与后台同时先读后写 | 没有嵌套事务错误或 `SQLITE_BUSY_SNAPSHOT`；采集事件不丢 | 任务 1、3、11 |
+| 首次设置时界面与后台同时打开新库 | 不报“数据库忙”；WAL 切换由程序重试 | 任务 3、8 |
 | 生成 Excel 期间采集或维护改变了记录 | 不登记导出、不锁定，提示重新生成 | 任务 3、7 |
 | 从未启用后台、后台被系统关闭 | 界面可设置、核对、导出；打开过界面的日子有备份；状态如实显示 | 任务 5、6、8 |
 | 采集工作进程或监听器崩溃、后台被强杀 | 自动重启；停机期间的电源事件由 pmset 补齐；状态不误报正常 | 任务 4、6、11 |
@@ -73,11 +78,14 @@
 | 资料、模板、规则变更；导出后确认状态变化 | 旧邮件和导出提示重新生成 | 任务 3、7 |
 | ×、⌘Q、强制终止 gui | 后台和菜单栏仍在，事件继续落库 | 任务 1、6、11 |
 | 明确停止后台后重新登录 | 不被 KeepAlive 或登录拉起；界面不受影响 | 任务 1、6 |
-| 后台运行时从 Finder、程序坞或通知打开应用 | 只出现一个界面窗口和一个程序坞图标 | 任务 1、6 |
+| 后台运行时从 Finder、程序坞或通知打开应用 | 只出现一个界面窗口和一个程序坞图标；点通知不重复启动界面 | 任务 1、6 |
+| 在系统设置中关闭后台项目 | 显示“已在系统设置中关闭”并提供入口；应用不自行重新加载 | 任务 6、8 |
+| 菜单栏图标被刘海挡住；登录项显示为可执行文件名和通用图标 | 说明文档告诉用户如何找回和识别，不误关后台 | 任务 6、9 |
 | 导出到文稿、桌面或 iCloud 目录 | 由界面进程写入；后台不触发隐私授权 | 任务 7 |
 | 首次设置时还没有网络记录 | 可以跳过公司网络，之后再提示标记 | 任务 8 |
-| 重新构建后签名身份变化；旧版本后台仍在运行 | 提示重新允许或重启后台，不静默失效 | 任务 1、6、9 |
+| 重新构建后签名身份变化；旧版本后台仍在运行 | 不需要重新允许后台（已实测）；版本不一致时提示重启后台，不静默失效 | 任务 1、6、9 |
 | 安装命令中断；后台子进程未退出 | 未退出时不替换；再次执行先恢复再安装 | 任务 9 |
+| 应用装在中文路径下，安装脚本查找应用进程 | `ps` 在 UTF-8 locale 下运行，不因路径被转义而漏判 | 任务 9 |
 | 带隔离标记的通用包；从“下载”直接打开 | 引导移动到应用目录，不注册失效路径 | 任务 1、8、9 |
 | 维护者的旧版正在运行；迁移中断 | 不双重采集；可按脚本回退旧版 | 任务 8、10 |
 | 中文路径、Intel、没有开发环境 | 辅助程序可启动，SQLite 可备份，资源可读取 | 任务 1、9、11 |
@@ -99,6 +107,7 @@
   - `computeMonth()` 内部自行开启事务，先读后写（更新 `day_auto`、清除确认）。
   - `saveDay`、`confirmDay`、`confirmCleanDays`、`setMonthLocked`、`exportMonth` 都是先调用 `computeMonth()`，再另开事务写入；`restoreAuto` 在延迟事务里先读后写。
   - 外部评审已复现两个问题：在 `computeMonth()` 外再包一层事务，会报嵌套事务错误；两个连接并发时，延迟事务先读后写会得到 `SQLITE_BUSY_SNAPSHOT`，这种情况等锁时间无法处理。现有 Web 和采集程序并存时，也存在同样的隐患。[SQLite 隔离说明](https://www.sqlite.org/isolation.html)
+- `openDb` 先执行 `journal_mode=WAL` 再设置 `busy_timeout`。任务 1 实测：两个进程同时打开一个新库时，切换 WAL 直接返回 `SQLITE_BUSY`，有时两边都失败；调换顺序后仍偶有失败，必须由程序重试。现有部署的库早已处于 WAL 模式，问题主要出现在新建数据库时，也就是桌面版首次设置的场景。
 - 对重复的相同请求，`saveDay`、`restoreAuto`、`confirmCleanDays`、`setMonthLocked` 都不会产生新的修改；`confirmDay` 重复执行只更新确认时间，并多一条历史记录。
 - `exportMonth` 先写文件，再在事务中登记导出和锁定。但登记前没有再次核对记录，而且它会直接写入设置中的导出目录，桌面版须分别改为两次核对和由 gui main 复制。
 - 旧程序的 `migrate()` 在库版本不低于自身最新版本时直接返回（`src/lib/db/index.ts:40`），因此只追加表或列时，旧程序仍能工作。
@@ -124,7 +133,8 @@
 
 ### 工具选择说明
 
-- **Node 版本：** 开发和 CI 改用 Node 24（不低于 24.15.0），与 Electron 内置的 Node 主版本一致，`engines` 改为 `>=24.15 <25`。维护者本机目前是 22.23.3，需要另装 Node 24。旧部署脚本固定使用 Homebrew 的 node@22，过渡期不改；`engines` 不匹配只会告警。SQLite 仍须在实际 Electron 工作进程中测试。
+- **Node 版本：** 开发和 CI 改用 Node 24（不低于 24.15.0），与 Electron 内置的 Node 主版本一致，`engines` 改为 `>=24.15 <25`。维护者本机已用 nvm 安装 24.21.0，与 Electron 44.7.2 内置的版本相同，两者的 SQLite 都是 3.53.4；仓库提供 `.nvmrc`。旧部署脚本固定使用 Homebrew 的 node@22，过渡期不改；`engines` 不匹配只会告警。任务 1 已在 Node 24 下跑通现有 142 项测试、类型检查和 lint，并在 Electron 工作进程中验证了 SQLite。
+- **npm 11：** Node 24 自带的 npm 11 默认跳过依赖的安装脚本，需要的包要在 `package.json` 的 `allowScripts` 中放行。Electron 44 不再依赖安装脚本，在首次使用时下载，或用 `install-electron` 预先下载，所以不需要放行；目前只放行 esbuild。
 - **不使用 Electron Forge：** 只需要生成 .app 和 zip，直接用 packager 加系统自带的 `codesign`、`ditto`、`lipo`、`plutil` 即可，减少对插件生命周期的依赖。
 - **Playwright：** 它对 Electron 的支持仍标为实验性，而且启动时需要 Node 调试参数，所以只在测试构建上运行。核心与组件测试由 Vitest 承担；正式构建由脚本检查加人工清单验收。[Playwright Electron 支持](https://playwright.dev/docs/api/class-electron)
 - **剪贴板：** Electron 44 在 renderer 中移除了 `clipboard` 模块，复制邮件由 gui main 完成。[Electron 44 变更](https://www.electronjs.org/docs/latest/breaking-changes)
@@ -201,7 +211,7 @@ doc/refactor/                   本方案、计划、实测验证与验收记录
 ```ts
 type AppRole = "gui" | "agent";
 type BuildProfile = "release" | "test";
-type LaunchAgentState = "notInstalled" | "loaded" | "notLoaded" | "blockedBySystem";
+type LaunchAgentState = "notInstalled" | "loaded" | "blockedBySystem";
 type CollectionHealth = "starting" | "running" | "degraded" | "stopped";
 interface RuntimePaths {
   dataDir: string; logsDir: string; electronDir: string; // electronDir = <dataDir>/electron/<role>
@@ -231,21 +241,28 @@ interface PlatformAdapter {
   probeNetwork(): Promise<NetworkInfo>;
   readPowerHistory(): Promise<string | null>;
   agentState(): Promise<LaunchAgentState>;
-  enableAgent(executable: string): Promise<void>;  // 写入 plist 并 bootstrap
+  enableAgent(executable: string): Promise<void>;  // 写入 plist 并 bootstrap；blockedBySystem 时拒绝
   disableAgent(): Promise<void>;                   // 先移除 plist，再 bootout
-  openBackgroundSettings(): Promise<void>;
-  launchGui(route?: "settings"): Promise<void>;
-  appLocationProblem(executable: string): "translocated" | "volume" | null;
-  waitAppProcessesExit(bundlePath: string, timeoutMs: number): Promise<boolean>;
+  openBackgroundSettings(): Promise<void>;         // 打开“登录项与扩展”设置页
+  launchGui(route?: "settings"): Promise<void>;    // open -n -a <应用> --args --role=gui
+  appLocationProblem(executable: string): "translocated" | "volume" | null; // 路径含 /AppTranslocation/ 或在 /Volumes/ 下
+  waitAppProcessesExit(bundlePath: string, timeoutMs: number): Promise<boolean>; // ps 须在 LC_ALL=en_US.UTF-8 下运行
 }
 ```
 
-“后台已启用”的唯一依据是启动项文件存在：
+后台状态由启动项文件和 launchd 的加载状态共同判定：
 
-- 明确停止时移除启动项。
-- 关机、退出登录、`SIGTERM` 和崩溃不改动启动项。
+| 启动项文件 | `launchctl print` | `LaunchAgentState` |
+| --- | --- | --- |
+| 不存在 | — | `notInstalled`：未启用，或已由用户停止 |
+| 存在 | 能找到任务 | `loaded`：已启用，运行与否再看 `collectorState` |
+| 存在 | 找不到任务 | `blockedBySystem`：在系统设置中被关闭 |
 
-因此不需要另外保存启用选择。`--data-dir=` 和 `--label-suffix=` 只用于开发、测试和正式构建的安装验收；正式使用时取默认值。
+- 明确停止时移除启动项。关机、退出登录、`SIGTERM` 和崩溃不改动启动项。因此不需要另外保存启用选择。
+- 任务 1 实测：在系统设置中关闭后台项目时，系统卸载任务并保留启动项文件，`launchctl print-disabled` 没有变化。此时应用自行 `bootstrap` 仍会成功，但那会绕过用户的选择，所以 `blockedBySystem` 下不重新加载，只调用 `openBackgroundSettings()`。用户在系统设置中重新打开后，系统立即加载任务。
+- 安装中断等原因也可能造成“文件在、任务不在”，这种情况由安装脚本的恢复流程处理，界面统一按 `blockedBySystem` 提示。
+
+`--data-dir=` 和 `--label-suffix=` 只用于开发、测试和正式构建的安装验收；正式使用时取默认值。
 
 ### 事务与导出流程
 
@@ -351,11 +368,13 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 | `KeepAlive` | `{SuccessfulExit: false}` |
 | `ThrottleInterval` | `30` |
 | `LimitLoadToSessionType` | `Aqua` |
-| `AssociatedBundleIdentifiers` | 应用的 bundle ID |
+| `AssociatedBundleIdentifiers` | 应用的 bundle ID。没有 Team ID 时不生效（实测登录项只显示可执行文件名和通用图标），保留是为了以后有开发者账号时直接生效 |
 | 日志 | 标准输出和错误输出写入日志目录 |
 
 - 用 `plutil -convert xml1` 把 JSON 转成 plist，不拼接 XML 字符串，然后用 `plutil -lint` 校验。
-- agent 收到 `SIGTERM` 后停止监听，等待采集工作进程退出，写入 `running=false`，以 0 退出。崩溃（非零退出或被信号终止）由 launchd 在节流间隔后重启。
+- 停止流程：Electron 主进程自己接管 `SIGTERM` 并转成 `app.quit()`，`process.on('SIGTERM')` 不会触发（任务 1 实测）。agent 在 `before-quit` 中阻止默认退出，停止监听，等待采集工作进程退出，写入 `running=false`，再以 0 退出。`bootout`、关机、退出登录和在系统设置中关闭开关都走这条路径。
+- 崩溃（非零退出或被信号终止）由 launchd 重启：运行时间不足节流间隔时等到间隔结束，否则立即重启。实测 agent 被强杀时，Helper 和 Swift 监听器在 30ms 内随之退出。
+- `bootout` 在 3ms 内返回，不等进程退出，需要等待的调用方自己轮询。
 
 ### 构建配置
 
@@ -363,6 +382,7 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 | --- | --- | --- |
 | 用途 | `desktop:install`、`desktop:dist`、安装验收 | 仅 Playwright，不安装 |
 | 应用名称／bundle ID | `kaoqin.app`／`local.kaoqin.desktop`（显示名“个人考勤”） | `kaoqin-test.app`／`local.kaoqin.desktop.test` |
+| 主程序可执行文件名（登录项中显示的名称） | `kaoqin` | `kaoqin-test` |
 | 默认启动项标签 | `local.kaoqin.agent` | `local.kaoqin.agent.qa` |
 | 输出目录 | `dist/desktop/` | `dist/desktop-test/` |
 | `RunAsNode` | 关 | 关 |
@@ -372,51 +392,37 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 
 安装脚本拒绝安装测试构建。打包策略测试会同时读取两套产物的 fuses 状态并断言。
 
-## 任务 1 打包后实际验证（一次性验证，不合入主线）
+## 任务 1 打包后实际验证（已完成）
 
-**文件：** 在独立分支或工作树中创建以下最小实现：
+2026-10-14 在分支 `spike/desktop-packaging`（工作树 `../kaoqin-desktop`）完成，结论见 [desktop-spike.md](desktop-spike.md)。验证代码不合入主线，正式实现从任务 2 开始；本计划和规格已按结论修订。
 
-- 最小的 `src/desktop/entry.ts` 和窗口；
-- 最小 agent：菜单栏，加一个写入测试库的工作进程；
-- `scripts/desktop/spike-package.mjs`；
-- 测试用启动项，标签为 `local.kaoqin.agent.qa`，使用临时数据目录。
-
-结论写入 `doc/refactor/desktop-spike.md`。代码不合入主线，正式实现从任务 2 开始。
-
-- [ ] 用精确版本安装 electron、@electron/packager、@electron/fuses，按正式配置打出 arm64 包。分别用临时签名和本机自建证书签名，确认 `codesign --verify --deep --strict` 通过。另按测试配置打一份包，确认 Playwright 能启动它，而正式包拒绝调试参数。
-- [ ] 角色与单实例：
-  - gui 和 agent 在 `app.whenReady()` 之前设置不同的 `userData`（`electron/<role>`），各自单实例运行；agent 不创建 BrowserWindow。
-  - Info.plist 设置 `LSUIElement`，gui 启动后调用 `app.dock.show()`。
-  - 验证 agent 登录启动时程序坞不闪现图标。
-- [ ] 打开路由：
-  - agent 运行时，分别通过 Finder 双击、程序坞、Spotlight、`open -a`、点击 agent 发出的通知来打开应用，记录系统把请求交给了哪个进程。
-  - agent 收到 `activate` 时，用 `open -n -a <应用路径> --args --role=gui` 启动界面；界面已在运行时，由单实例机制转交。
-  - 成功标准：始终只出现一个界面窗口和一个程序坞图标。
-  - 不成立时改用独立的辅助应用包，并先修订规格。
-- [ ] launchd：
-  - 生成 plist 并 `launchctl bootstrap`。
-  - 验证 `RunAtLoad`；在 `KeepAlive.SuccessfulExit=false` 下，崩溃会重启、正常退出不重启。
-  - 先移除 plist 再 `bootout` 后，后台不复活，重新登录也不启动。
-  - 记录 `bootout` 之后 agent、Helper 和 Swift 子进程分别在多久内退出，作为任务 9 的等待依据。
+- [x] 精确版本的 electron、@electron/packager、@electron/fuses 打出正式配置的 arm64 包和通用包；临时签名、未信任的自建证书都通过 `codesign --verify --deep --strict`。Playwright 能启动测试构建，正式构建拒绝调试参数。
+- [x] 角色与单实例：ready 前按角色设置 `userData`，各自单实例；`LSUIElement` 加 `app.dock.show()` 可用；Electron 未在默认 userData 写任何文件。
+  - 未验证：agent 登录启动时程序坞是否闪现图标，转入任务 6 和任务 11。
+- [x] 打开路由：Finder、Spotlight、`open -a`、菜单栏、通知都交给 agent，程序坞交给 gui；始终只有一个窗口，同一应用包方案成立。点通知时 agent 同时收到 `click` 和 `activate`，需要合并（任务 6）。
+- [x] launchd：
+  - RunAtLoad 正常；强杀后重启，以 0 退出后不重启。
+  - 先删 plist 再 `bootout` 后不复活；`bootout` 3ms 返回，各进程 33ms 内退出。
   - 路径含空格和中文时正常。
-  - 记录登录项中的显示、`AssociatedBundleIdentifiers` 的效果，以及在系统设置中关闭后台项目后 `launchctl print`／`print-disabled` 能否检测到差异。
-- [ ] 签名身份：重新构建同一版本并覆盖安装，记录两种签名下是否需要重新允许后台、是否出现重复的登录项、通知是否再次询问。
-- [ ] SQLite：
-  - 在 agent 和 gui 的 utilityProcess 中分别打开同一个测试库。
-  - 两边同时用 `BEGIN IMMEDIATE` 执行“计算月表并写入”和“插入事件”，各一千次；不出现嵌套事务错误、`SQLITE_BUSY_SNAPSHOT` 或丢失的事件。
-  - 用延迟事务做对照，确认能复现 `SQLITE_BUSY_SNAPSHOT`。
-  - 建库、迁移、在线备份、重新读取都成功；gui 退出或被强杀后，agent 的写入继续。
-- [ ] 进程退出：
-  - 强杀 agent，记录 utilityProcess 和 Swift 子进程是否随之退出；验证“Swift 监听器在标准输入关闭时退出”这一改法有效。
-  - 对 utilityProcess 先 `kill()` 再等待 `exit` 事件，记录需要多长时间。
-- [ ] 隔离标记：给 universal zip 加上隔离属性后解压，验证首次打开流程；从“下载”直接打开时，被随机转移的运行路径能被检测出来。
-- [ ] 记录结论：版本、签名方式、每一项的结果，以及需要修改的设计。关键项不成立时，先修订规格和计划再继续。
+  - 登录项显示为可执行文件名和通用图标，`AssociatedBundleIdentifiers` 不生效。
+  - 系统设置关闭开关：任务被卸载，plist 保留，`print-disabled` 无变化；重新打开立即加载。
+  - 未验证：停止后重新登录不启动，转入任务 6 和任务 11。
+- [x] 签名身份：两种签名下，代码有改动的重新构建与签名方式切换后覆盖安装，都不需要重新允许后台，登录项不重复，通知不再询问。
+  - 未得出结论：受保护目录的授权（写入“文稿”时没有弹框），转入任务 7。
+- [x] SQLite：
+  - 两个 utilityProcess 并发 `BEGIN IMMEDIATE` 先读后写各 1000 次 ×3：0 错误、0 丢失；延迟事务对照失败 6%～11%；嵌套事务报错可复现；在线备份完整。
+  - gui 退出后 agent 继续写入。
+  - 发现新库并发打开的问题，转入任务 3。
+- [x] 进程退出：强杀 agent 后子进程全部随之退出；Swift 监听器改为标准输入关闭即退出后不再留下孤儿进程；utilityProcess `kill()` 到 `exit` 约 4ms。
+- [x] 隔离标记：首次打开流程已记录（见规格第 6 节）；不移动直接打开时运行路径含 `/AppTranslocation/`，可以检测；移到“应用程序”后不再拦截。
+  - 未验证：Intel（本机没有 Rosetta），转入任务 9 和任务 11。
+- [x] 记录结论并修订规格和计划。
 
 ## 任务 2 依赖、构建骨架与平台契约
 
 **文件：**
 
-- 修改：`package.json`（精确版本、`engines`，以及 `dev:desktop`、`build:desktop`、`test:desktop:components`、`test:desktop:e2e` 脚本）、`tsconfig.json`。
+- 修改：`package.json`（精确版本、`engines`、`allowScripts`，以及 `dev:desktop`、`build:desktop`、`test:desktop:components`、`test:desktop:e2e` 脚本）、`tsconfig.json`；新增 `.nvmrc`。
 - 创建构建与测试配置：`vite.renderer.config.ts`、`vitest.desktop.config.ts`、`playwright.desktop.config.ts`、`scripts/desktop/doctor.mjs`、`scripts/desktop/build.mjs` 初版（区分 release／test）。
 - 创建契约与平台：`src/shared/contracts.ts`、`src/shared/validation.ts`、`src/platform/contracts.ts`、`src/platform/index.ts`、`src/platform/macos/paths.ts`、`src/platform/windows/unsupported.ts`。
 - 测试：`tests/desktop/platform.test.ts`、`tests/desktop/contracts.test.ts`、`tests/desktop/doctor.test.ts`。
@@ -434,10 +440,13 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 开发和测试数据目录对应不同的启动项标签。
   - Windows 返回未支持的能力，不调用 Mac 命令。
   - 未知命令、非法日期、超长备注、非法类别和任何路径参数都被拒绝。
-  - 应用位于随机转移路径或 `/Volumes/` 下时，报告位置问题。
-- [ ] 按任务 1 的结论安装依赖并锁定版本，开发 Node 改为 24。现有的 `test`、`typecheck`、`lint` 和旧部署脚本保持可用。`dev:desktop` 使用 `./data/dev` 和 `.dev` 标签。
+  - 应用位于随机转移路径（路径含 `/AppTranslocation/`）或 `/Volumes/` 下时，报告位置问题。
+- [ ] 按任务 1 验证过的版本安装依赖并锁定（`--save-exact`），开发 Node 改为 24：
+  - 新增 `.nvmrc`（`24.21.0`），`engines` 改为 `>=24.15 <25`。
+  - npm 11 默认跳过依赖的安装脚本：`allowScripts` 只放行 esbuild。Electron 不需要放行，构建脚本在打包前先执行 `install-electron` 下载运行时。
+  - 现有的 `test`、`typecheck`、`lint` 和旧部署脚本保持可用（任务 1 已在 Node 24 下验证）。`dev:desktop` 使用 `./data/dev` 和 `.dev` 标签。
 - [ ] 定义命令表中的具体 DTO，尤其是日详情的事件、历史、模板和导出阻塞响应，消除 `any`。界面和工作进程都从这里导入，不保留 FormData 协议。
-- [ ] doctor：检查 macOS 不低于 13、Node 主版本为 24、`swiftc` 可用（缺少时提示 `xcode-select --install`）、Electron 下载可达（不通时提示镜像环境变量），输出中文问题清单。
+- [ ] doctor：检查 macOS 不低于 13、Node 主版本为 24（不符时提示 `nvm use`）、`swiftc` 可用（缺少时提示 `xcode-select --install`）、Electron 运行时能下载（不通时提示镜像环境变量），输出中文问题清单。
 - [ ] 运行 `npm test`、`npm run typecheck` 和新增测试。提交本任务变更。
 
 ## 任务 3 把业务代码变成可独立调用的服务
@@ -457,12 +466,14 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 - `snapshotRevision(inputs: SnapshotInputs): string`
 - `openBusinessDb(paths, {synchronous}): Db`：迁移前备份，并做库版本兼容检查。
 
+- [ ] 先写打开数据库的失败测试：两个进程（子进程）同时 `openDb` 同一个不存在的文件，重复多轮。现状会出现 `SQLITE_BUSY`（任务 1 已复现）；改为先设 `busy_timeout`、再切换 WAL 并对 `SQLITE_BUSY` 退避重试后，每轮都成功，且库处于 WAL 模式。
 - [ ] 先写事务的失败测试（用两个连接打开同一个临时文件库）：
   - 在 `computeMonth()` 外再包事务会报嵌套事务错误（复现现状）。
   - 连接 A 用延迟事务读取后，连接 B 提交，A 再写入会得到 `SQLITE_BUSY_SNAPSHOT`（复现现状）。
   - 改为 `writeTransaction` 加 `*InTx` 后，上述场景在等锁时间内串行完成。
   - 保存、确认、恢复自动、锁定与并发写入的事件交错执行时，结果与串行执行一致。
 - [ ] 改造事务边界：
+  - `openDb` 调整为先设置 `busy_timeout`，再切换 WAL，切换失败时退避重试。旧 Web 和采集程序也随之受益。
   - `src/lib/db/index.ts` 新增 `writeTransaction`（`BEGIN IMMEDIATE`）。
   - `computeMonth` 拆出 `computeMonthInTx`。
   - `saveDay`、`restoreAuto`、`confirmDay`、`confirmCleanDays`、`setMonthLocked`、`saveNetwork`、`saveSettings`、`installTemplate` 的“计算加写入”都放进同一个写事务，并提供对应的 `*InTx` 版本。
@@ -519,15 +530,15 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 时间事实和旧的解析规则保持不变。
   - 启动、唤醒和每小时的补齐保留；不重新启用每分钟采样。
   - 数据库连接使用 `synchronous=FULL`。
-  - 网络快照的多条写入和 pmset 导入都放进写事务。
+  - 网络快照的多条写入和 pmset 导入都放进写事务。pmset 导入按批拆成多个短事务，每批之间让出写锁，避免界面的写请求长时间等待（任务 1 实测一方连续写时另一方可能一直抢不到锁）。
   - `collectorState` 追加版本、启动时间、失败次数和原因。
-- [ ] Swift 监听器改为标准输入关闭即退出，父进程以管道方式启动它，避免留下孤儿进程。agent 被强杀后，监听器随之结束。
+- [ ] Swift 监听器改为标准输入关闭即退出，父进程以管道方式启动它，避免留下孤儿进程。agent 被强杀后，监听器随之结束。任务 1 已验证这一改法：现有监听器在父进程退出后成为孤儿，改后随父进程退出；监听器忽略 `SIGPIPE`，写入失败不崩溃。
 - [ ] agent main 监护采集工作进程：
   - 异常退出时，先确认旧工作进程和它的监听器已经退出，再按 1、5、15 秒退避重启；连续三次失败则标记“采集异常”，等待菜单中的重试。
   - 工作进程重启后先执行 pmset 补齐。
   - agent main 自身崩溃时由 launchd 重启。
 - [ ] 维护：采集工作进程每十分钟执行一次（沿用租约和防重复逻辑），睡眠恢复和启动时补跑，不假设计时器在睡眠中执行。通知经 agent main 用 Electron 通知显示，点击通知打开界面。
-- [ ] 关机、退出登录或 `bootout` 时收到 `SIGTERM`：停止监听，等待工作进程退出，写入 `running=false`，以 0 退出，不修改启动项。
+- [ ] 关机、退出登录、`bootout` 或在系统设置中关闭开关时，系统发出 `SIGTERM`，Electron 将其转成 `app.quit()`。收尾写在 `before-quit` 中：阻止默认退出，停止监听，等待工作进程退出，写入 `running=false`，再以 0 退出，不修改启动项。不要依赖 `process.on('SIGTERM')`，任务 1 实测它不会触发。
 - [ ] 运行 `npm test -- tests/power-attendance.test.ts tests/power-listener.test.ts tests/pmset.test.ts tests/network-snapshot.test.ts tests/tasks.test.ts tests/desktop/collector-worker.test.ts tests/desktop/launch-agent.test.ts tests/desktop/agent-maintenance.test.ts`。
 - [ ] 在测试标签和临时数据目录下做集成测试：注入事件后读取数据库；强杀工作进程后验证 pmset 补齐；触发维护并校验备份完整。提交本任务变更。
 
@@ -598,20 +609,24 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 - [ ] 编写失败测试：
   - 菜单状态文字随 `CollectionHealth` 变化。
   - 最近事件时间较早但进程都就绪时，仍判定为正常。
-  - 以下情况各有明确文字：监听器未就绪、工作进程异常、启动项未加载、被系统关闭、版本不一致。
+  - 以下情况各有明确文字：监听器未就绪、工作进程异常、被系统设置关闭、版本不一致。
   - 重复启动 agent 不会产生重复的菜单栏图标或采集器。
-- [ ] 菜单项：
-  - 包含状态与最近事件时间、打开考勤、打开设置、异常时的重试、停止后台采集。
+  - 1 秒内连续收到的打开请求（如点通知时的 `click` 加 `activate`）只调用一次 `launchGui`。
+  - `blockedBySystem` 时，启用操作不调用 `bootstrap`，只打开系统设置。
+- [ ] 菜单栏与菜单项：
+  - 常态只显示窄的模板图标（`kaoqinTemplate.png`），启动和异常时再附加简短文字。任务 1 实测纯文字标题会被刘海挡住。
+  - 菜单包含状态与最近事件时间、打开考勤、打开设置、异常时的重试、停止后台采集。
   - 打开操作调用 `platform.launchGui(route)`。
-  - 按任务 1 的结论处理 agent 收到的 `activate`。
+  - 任务 1 实测：Finder、Spotlight、`open -a`、菜单栏和通知打开时，系统都把请求交给 agent（触发 `activate`），即使 gui 已在运行；程序坞图标交给 gui。agent 收到 `activate` 时调用 `launchGui`，gui 的单实例锁负责把多余的进程转交给已有窗口。
 - [ ] 停止与启用：
   - 停止后台（从菜单或界面发起，确认一次）：先移除 plist，再 `bootout`；agent 收到 `SIGTERM` 后按任务 4 的方式退出。失败时保留可见的错误，不假称已停止。
-  - 启用后台：先检查应用位置，再写入 plist 并 `bootstrap`，然后等待 `collectorState` 就绪；超时则显示原因。
+  - 启用后台：先检查应用位置，再写入 plist 并 `bootstrap`，然后等待 `collectorState` 就绪；超时则显示原因。状态为 `blockedBySystem` 时不执行这些步骤，改为说明“后台已在系统设置中关闭”并打开“登录项与扩展”。
 - [ ] 界面显示同一份后台状态并周期刷新：
-  - `blockedBySystem` 时提供系统设置入口。
+  - `blockedBySystem` 时提供系统设置入口；用户在系统设置中重新打开后，系统会立即加载任务，界面刷新即可，不需要应用介入。
   - 后台版本与界面不一致时提供“重启后台”，即 `bootout` 后等待进程退出，再重新 `bootstrap`。
 - [ ] 运行 `npm test -- tests/desktop/tray.test.ts tests/desktop/background-status.test.ts` 和 `npm run test:desktop:e2e -- tests/desktop-e2e/lifecycle.spec.ts`（测试构建）。
-- [ ] 在测试标签下验证：强杀 gui 后采集继续；停止后不复活；重新登录后不启动；异常恢复后菜单只出现一次。提交本任务变更。
+- [ ] 在测试标签下验证：强杀 gui 后采集继续；停止后不复活；异常恢复后菜单只出现一次；在系统设置中关闭和重新打开时状态正确。
+- [ ] 任务 1 未能验证、需要注销重新登录的两项，在这里补做：登录启动时程序坞不闪现图标；停止后台后重新登录不启动。维护者不便注销时，推迟到任务 11 验收。提交本任务变更。
 
 ## 任务 7 模板、导出与邮件复制
 
@@ -646,7 +661,8 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 正式导出和可选锁定保留原语义，草稿仍不锁定。
 - [ ] 邮件：gui main 调用 `mail.compose({ym, revision})`，版本一致才写入剪贴板；剪贴板写入失败时，显示正文供手动选取复制。
 - [ ] 运行 `npm test -- tests/export.test.ts tests/mail-summary.test.ts tests/missing-records.test.ts tests/desktop/files.test.ts tests/desktop/submission.test.ts` 和 `npm run test:desktop:components -- tests/desktop/submission.test.tsx`。
-- [ ] 读取生成工作簿的单元格，验证午休扣除口径；导出到文稿、桌面目录时，确认后台不触发隐私授权；用实际 Excel 验证公式重算和打印布局。提交本任务变更。
+- [ ] 读取生成工作簿的单元格，验证午休扣除口径；用实际 Excel 验证公式重算和打印布局。
+- [ ] 隐私授权（任务 1 未得出结论：验证程序向“文稿”写入时没有弹出授权框，“文件与文件夹”里也没有记录）：在正式构建上，从系统启动的界面导出到文稿和桌面目录，记录是否弹框、授权记在哪个应用名下；重新构建并覆盖安装后再导出一次，确认授权是否保留。后台在整个过程中不得触发授权。提交本任务变更。
 
 ## 任务 8 首次设置与启用后台
 
@@ -662,16 +678,16 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 没有资料、模板为匿名姓名、邮件姓名与模板姓名不一致时，显示可操作的提示。
   - 数据库中没有网络记录时，公司网络一步可以跳过，引导仍能完成。
   - 不启用后台时，仍可保存资料和导出。
-  - 未加载或被系统关闭的后台不能显示为正常。
+  - 被系统设置关闭的后台不能显示为正常，也不被自动重新加载。
   - 明确停止后重新打开界面，不自动启用。
-  - 应用位置有问题时，不允许启用后台，并提示先移动。
+  - 应用位置有问题时（路径含 `/AppTranslocation/` 或在 `/Volumes/` 下），不允许启用后台，并提示先拖到“应用程序”再重新打开。
 - [ ] 引导：
   - 依次完成姓名、工作地点、交通费、模板、启用后台和公司网络；已有正确配置的项目跳过。
   - 公司网络放在最后，可选“稍后标记”。之后 `settings.get` 返回未命名的网络时，月表页和设置页提示命名并标记。
   - 启用前说明事实采集范围与本机数据位置。
 - [ ] 检测到旧版的 `local.kaoqin.web` 或 `local.kaoqin.collector` 仍在加载时，禁止启用新后台，并提示执行迁移脚本。这只会在维护者的电脑上出现。
 - [ ] 运行 `npm run test:desktop:components -- tests/desktop/onboarding.test.tsx` 和 `npm test -- tests/desktop/legacy-detect.test.ts`。
-- [ ] 在测试账户中手动验证首次启用、在系统设置中关闭、重新启用三种情况。提交本任务变更。
+- [ ] 在测试账户中手动验证首次启用、在系统设置中关闭、重新启用三种情况。首次启用时界面与后台几乎同时打开一个新库，确认两边都不报错（对应任务 3 的打开顺序修正）。提交本任务变更。
 
 ## 任务 9 一键安装、升级和分发
 
@@ -688,7 +704,7 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 - `npm run desktop:uninstall`：卸载。
 - `npm run desktop:dist`：生成发给非程序员的包。
 - `npm run desktop:smoke`：正式构建的安装验收。
-- 环境变量 `KAOQIN_SIGN_IDENTITY`：本机证书名称，缺省时用临时签名。
+- 环境变量 `KAOQIN_SIGN_IDENTITY`：本机证书名称或 SHA-1，缺省时用临时签名。`KAOQIN_SIGN_KEYCHAIN`：证书所在的钥匙串文件（可选）。任务 1 实测证书不需要设为信任，放在单独的钥匙串文件中即可，也不必加入钥匙串搜索列表。
 - 环境变量 `KAOQIN_INSTALL_DIR`：安装目录，缺省为 `~/Applications`。
 - 安装状态文件 `<dataDir>/install/state.json`，内容为 `{opId, step: "stopping" | "stopped" | "replaced" | "starting", appPath, stagedPath, previousPath, wasEnabled, fromVersion, toVersion}`。
 
@@ -697,6 +713,7 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 正式构建与测试构建的 fuses、bundle ID 和默认标签符合“构建配置”表；安装脚本拒绝测试构建。
   - 界面正在运行时，安装中止，且不改动任何文件。
   - `bootout` 后应用包内仍有进程（主程序、Helper、Swift 监听器）时，不替换应用；超时后恢复原后台并报错。
+  - 应用装在含空格和中文的路径下时，仍能找到应用包内的进程（`ps` 在 `LC_ALL=en_US.UTF-8` 下运行；任务 1 实测不设置时中文会被转义成 `M-hM^@…`，导致全部漏判）。
   - 原本启用的后台在替换后重新启动，原本停止的保持停止。
   - 任一步失败时自动恢复上一版。
   - 在每一步之后模拟中断，再次执行能先恢复到可用状态，再完成安装。
@@ -704,7 +721,9 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 按 release／test 配置构建 renderer 和 main/preload/worker。
   - 用 `swiftc -target arm64-apple-macos13` 和 `-target x86_64-apple-macos13` 分别编译监听器，再用 `lipo` 合成通用二进制，放在 ASAR 之外。
 - [ ] package：
-  - 用 packager 生成本机架构的 .app；`dist` 时生成 universal。
+  - 打包前先执行 `install-electron`，把下载失败与打包错误分开报告。
+  - 用 packager 生成本机架构的 .app；`dist` 时生成 universal。监听器已是通用二进制，两个架构的副本相同，列入 `osxUniversal.x64ArchFiles`（任务 1 按此配置打包成功，未测不列入时的表现）。
+  - 主程序可执行文件名为 `kaoqin`，它就是登录项中显示的名称。
   - 写入 Info.plist：`LSUIElement`、显示名称和版本。
   - 按配置表应用 fuses。
   - 最后由内向外签名，并运行 `codesign --verify --deep --strict`。签名不完整会让收到包的同事看到“已损坏”，所以校验失败就中止。
@@ -713,7 +732,7 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   2. 运行 doctor，构建并打包正式构建，产物放到数据目录的 `install/staged.app`。
   3. 检查界面是否在运行，在运行则中止。
   4. 写入状态 `stopping` 和 `wasEnabled`，然后 `bootout`。
-  5. 用 `waitAppProcessesExit` 等待应用包内所有进程退出，等待时间参考任务 1 的实测值。超时则重新 `bootstrap` 原后台，删除状态文件并报错。
+  5. 用 `waitAppProcessesExit` 等待应用包内所有进程退出。`bootout` 本身立即返回；任务 1 的验证程序 33ms 内退完，正式版还要等监听器和数据库关闭，超时取 10 秒以上。超时则重新 `bootstrap` 原后台，删除状态文件并报错。
   6. 写入状态 `stopped`。把当前应用改名为数据目录下的 `install/previous.app`，把新应用改名到安装位置；跨卷时改为复制并校验签名。
   7. 写入状态 `replaced`。原本启用的，写入状态 `starting`，重写 plist 并 `bootstrap`，等待 `collectorState` 报告新版本就绪；失败则换回上一版，并重新启动后台。
   8. 删除状态文件，打印结果。
@@ -722,13 +741,18 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
 - [ ] uninstall：停止后台，等待应用包内进程退出，移除 plist 和应用；默认保留数据和日志，并打印数据所在位置。
 - [ ] dist：
   - 生成正式构建的 universal 包，用 `ditto -c -k --keepParent` 打成 zip，保留签名。
-  - 附上 `doc/desktop-install.md`，内容包括：移动到应用目录、选择“仍要打开”、启用后台、升级（先停止后台再替换）、卸载及残留启动项的清理方法。
+  - 附上 `doc/desktop-install.md`，配截图，内容包括：
+    - 移动到应用目录；
+    - 首次打开的三步（“未打开”提示选“完成”、到“隐私与安全性”点“仍要打开”并确认、再次打开），按任务 1 实测的界面写；
+    - 启用后台，以及“登录项与扩展”里显示为 `kaoqin` 和通用图标属于正常；
+    - 菜单栏图标被刘海挡住时如何找回；
+    - 升级（先停止后台再替换）、卸载及残留启动项的清理方法。
 - [ ] release-smoke（正式构建的安装验收，不依赖 Playwright）：
   - 用 `KAOQIN_INSTALL_DIR` 安装到临时目录，使用 `--data-dir`、`--label-suffix=.qa` 隔离。
   - 检查签名、fuses、Info.plist 和包内容。
   - 用 `.qa` 标签启动 agent，确认 `collectorState` 就绪，然后停止，确认进程退出且不复活，最后卸载。
   - 界面、菜单栏和打开路由按 `doc/refactor/desktop-acceptance.md` 的人工清单逐项检查。
-- [ ] 两种芯片各验证一次：全新安装、重复安装、升级、在后台已停止的状态下升级、安装中断后重跑、卸载后数据保留。非程序员路径要在没有开发环境的账户中，用带隔离标记的 zip 验证。
+- [ ] 两种芯片各验证一次：全新安装、重复安装、升级、在后台已停止的状态下升级、安装中断后重跑、卸载后数据保留。Intel 需要 Intel 机器或安装 Rosetta（任务 1 未能验证）。非程序员路径要在没有开发环境的账户中，用带隔离标记的 zip 验证。
 - [ ] 本任务完成后即可邀请同事内测。提交本任务变更。
 
 ## 任务 10 维护者本机的一次性迁移
@@ -790,6 +814,7 @@ function commitExport(db: Db, input: ExportInput, tempFile: string): ExportCommi
   - 业务工作进程超时后，确认退出再重读，且不自动重发。
   - 后台版本不一致时有提示。
 - [ ] 完成测试矩阵：在正式构建上，覆盖 macOS 13 和公司实际使用的版本、arm64 和 x64。实际的合盖唤醒、登录和重启、后台开关、磁盘空间不足、只读导出目录、中文长路径和用 Excel 打开，都要记录结果。不为测试强制重启工作中的电脑。
+- [ ] 补齐任务 1 转入、之前仍未完成的项目：登录启动时程序坞不闪现图标、停止后台后重新登录不启动、Intel 上的运行，以及任务 7 的隐私授权结论。
 - [ ] 在没有开发环境的账户中验收正式构建的通用包；检查关闭窗口和退出 gui 后的资源占用、菜单响应、重复通知和异常恢复，记录实测值，不提前承诺固定的内存数字。
 - [ ] 确认维护者已稳定使用桌面版、Web 已无业务调用后，移除 Next 路由、Server Actions、`server-only`、Turbopack 配置和旧部署入口。旧版的回退说明保留到旧程序目录删除为止。修改 Next 文件前，仍遵守根目录 AGENTS.md 对本地文档的要求。
 - [ ] 执行完整回归、类型检查、Lint、桌面构建和两种架构的打包校验；完成一次独立的整体代码复核并修复阻塞问题。README 改为：程序员安装、非程序员说明、菜单栏操作、备份、升级和卸载。提交最终变更。
@@ -811,7 +836,7 @@ flowchart LR
 
 | 阶段 | 完成后可以验证什么 |
 | --- | --- |
-| 任务 1 | 打包后的两种角色、打开路由、launchd 启停、进程退出时间、签名身份变化、两套构建配置，以及 SQLite 多进程写事务的实际表现 |
+| 任务 1（已完成） | 打包后的两种角色、打开路由、launchd 启停、进程退出时间、签名身份变化、两套构建配置，以及 SQLite 多进程写事务的实际表现 |
 | 任务 2 至 4 | 事务边界修正后，无考勤窗口时也能采集、补齐和维护 |
 | 任务 5 至 8 | 全部页面、菜单栏、后台启停、导出和首次设置在桌面版中可用 |
 | 任务 9 | 程序员一行命令安装，非程序员使用通用包；可开始同事内测 |
@@ -819,7 +844,7 @@ flowchart LR
 
 默认按编号 1 → 11 依次施工，编号顺序本身满足上图的依赖。任务 4 和任务 5 都只依赖任务 3，人手充足时可以并行；任务 6 必须等两者都完成。
 
-施工在隔离工作目录中进行，保留目前已部署且运行正常的旧版。开工前先确认工作区干净，从 `main` 创建隔离分支或工作树。每个任务只提交本任务的文件。
+施工在隔离工作目录中进行，保留目前已部署且运行正常的旧版。开工前先确认工作区干净，从 `main` 创建隔离分支，在工作树 `../kaoqin-desktop` 中施工，并在其中执行 `nvm use`。主目录保持在 `main`，不安装桌面版依赖。每个任务只提交本任务的文件。
 
 ## 自查和规格覆盖
 
@@ -841,7 +866,7 @@ flowchart LR
 | 维护者旧版迁移与回退 | 任务 8、10 |
 | Windows 适配边界及未支持状态（本计划不含 Windows 采集实现） | 任务 2、4 |
 
-当前阶段只产出方案与计划，上面的实现和验收步骤都是后续施工项。是否继续采用同一应用包承载两种角色，由任务 1 的实际验证决定。
+任务 1 已完成，验证了同一应用包承载两种角色的方案成立，并按结论修订了本计划。任务 2 至 11 是后续施工项。
 
 ## 技术依据
 
@@ -852,4 +877,5 @@ flowchart LR
 - [Playwright Electron 支持](https://playwright.dev/docs/api/class-electron)：测试构建需要保留调试参数。
 - [SQLite 隔离说明](https://www.sqlite.org/isolation.html)：WAL 下的读写快照、写事务与 `SQLITE_BUSY_SNAPSHOT`。
 - [Apple launchd 作业说明](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)：用户级启动项、`RunAtLoad`、`KeepAlive`。
-- [Node 24 SQLite 文档](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)：`DatabaseSync` 和在线 `backup` API；在 Electron 中的兼容性仍由任务 1 证明。
+- [Node 24 SQLite 文档](https://nodejs.org/docs/latest-v24.x/api/sqlite.html)：`DatabaseSync` 和在线 `backup` API；任务 1 已在 Electron 44.7.2 的 utilityProcess 中验证。
+- [SQLite 等锁处理](https://www.sqlite.org/c3ref/busy_handler.html)：为避免死锁，某些加锁场景不会调用等锁处理，切换 WAL 需要由程序重试。
