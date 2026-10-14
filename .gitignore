@@ -43,6 +43,9 @@ next-env.d.ts
 
 # 本项目
 /dist/
+# 本地 AI 协作说明，不提交
+AGENTS.md
+CLAUDE.md
 # 本地数据（含个人考勤与系统日志，不提交）
 /data/
 
