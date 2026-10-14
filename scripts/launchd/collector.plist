@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 采集程序的 launchd 配置模板。__NODE__、__APP__、__LOG__ 由部署脚本替换 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>local.kaoqin.collector</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>--disable-warning=ExperimentalWarning</string>
+    <string>__APP__/collector.mjs</string>
+  </array>
+
+  <!-- 登录后自动启动，退出后自动重启（两次启动至少间隔 30 秒） -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- 正常日志由程序自己写到 collector.log，这里只接住崩溃时的输出 -->
+  <key>StandardOutPath</key>
+  <string>__LOG__/collector.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__/collector.stderr.log</string>
+</dict>
+</plist>

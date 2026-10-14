@@ -1,0 +1,12 @@
+2000-01-03 02:43:15 +0900 Wake	DarkWake to FullWake : due to Notification Using AC
+2000-01-03 02:43:25 +0900 Sleep	Entering DarkWake state due to 'Clamshell Sleep':TCPKeepAlive=active
+2000-01-04 00:08:18 +0900 WakeTime	WakeTime: 0.322 sec
+2000-01-04 09:00:01 +0900 Notification	Display is turned on
+2000-01-04 09:00:02 +0900 Wake	Wake from Deep Idle : due to lid UserActivity
+2000-01-04 10:00:00 +0900 Assertions	PID 100(ExampleApp) Released NoIdleSleepAssertion "Example"
+2000-01-04 12:00:00 +0900 Notification	Display is turned off
+2000-01-04 13:00:00 +0900 Notification	Display is turned on
+2000-01-04 15:00:00 +0900 Notification	Display is turned off
+2000-01-04 15:15:00 +0900 Notification	Display is turned on
+2000-01-04 18:00:00 +0900 Notification	Display is turned off
+2000-01-04 18:00:02 +0900 Sleep	Entering Sleep state due to 'Clamshell Sleep':TCPKeepAlive=active

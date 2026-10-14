@@ -1,0 +1,68 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# 本项目
+/dist/
+# 本地数据（含个人考勤与系统日志，不提交）
+/data/
+
+# 私有文档、数据库、日志、密钥和个人模板
+/doc/local/
+/private/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+!tests/fixtures/pmset-sample.log
+*.key
+*.p12
+*.pfx
+.ssh/
+id_rsa*
+id_ed25519*
+*.xlsx
+!src/assets/default-template.xlsx
+!tests/fixtures/template-example.xlsx

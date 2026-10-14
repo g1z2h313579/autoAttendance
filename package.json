@@ -1,0 +1,46 @@
+{
+  "name": "kaoqin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13 <23"
+  },
+  "scripts": {
+    "dev": "KAOQIN_DATA_DIR=./data/dev NODE_OPTIONS=--disable-warning=ExperimentalWarning next dev -H 127.0.0.1 -p 3940",
+    "build": "next build",
+    "start": "next start -H 127.0.0.1 -p 3939",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest run",
+    "test:watch": "NODE_OPTIONS=--disable-warning=ExperimentalWarning vitest",
+    "build:collector": "bash scripts/build-collector.sh",
+    "collector:dev": "npm run build:collector && KAOQIN_DATA_DIR=./data/dev node --disable-warning=ExperimentalWarning dist/collector.mjs",
+    "deploy:collector": "bash scripts/deploy-collector.sh",
+    "uninstall": "bash scripts/uninstall.sh",
+    "db:pull": "node --disable-warning=ExperimentalWarning scripts/db-pull.mjs",
+    "judge:month": "esbuild scripts/judge-month.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/judge-month.mjs && KAOQIN_DATA_DIR=./data/dev node --disable-warning=ExperimentalWarning dist/judge-month.mjs",
+    "deploy": "bash scripts/deploy.sh",
+    "tasks:check": "esbuild scripts/tasks-check.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/tasks-check.mjs && node --disable-warning=ExperimentalWarning dist/tasks-check.mjs"
+  },
+  "dependencies": {
+    "@holiday-jp/holiday_jp": "2.5.2",
+    "@xmldom/xmldom": "0.9.12",
+    "jszip": "3.10.2",
+    "next": "16.4.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "esbuild": "^0.28",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.0",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "5.0.3"
+  }
+}
