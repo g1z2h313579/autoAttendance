@@ -3,6 +3,12 @@ export type DayDraft = Pick<DayResult, "category" | "clock_in" | "clock_out"> & 
 export function dayDraft(day: Pick<DayResult, "category" | "clock_in" | "clock_out" | "note">): DayDraft {
   return { category: day.category, clock_in: day.clock_in, clock_out: day.clock_out, note: day.note ?? "" };
 }
+export function hasDayDraftChanges(saved: DayDraft, draft: DayDraft): boolean {
+  return saved.category !== draft.category || saved.clock_in !== draft.clock_in || saved.clock_out !== draft.clock_out || saved.note !== draft.note;
+}
+export function monthRevision(days: Pick<DayResult, "date" | "category" | "clock_in" | "clock_out" | "note">[]): string {
+  return JSON.stringify(days.map(day => [day.date, dayDraft(day)]));
+}
 export function mergeDayDraft(before: DayDraft, incoming: DayDraft, draft: DayDraft): DayDraft {
   return {
     category: draft.category !== before.category ? draft.category : incoming.category,

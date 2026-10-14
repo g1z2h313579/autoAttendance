@@ -86,8 +86,8 @@ describe("历史采样恢复引擎", () => {
     expect(result.category).toBe("休日出勤");
     expect(result.flags).toContain("休息日上班待确认");
   });
-  it("无活动工作日标记休假待确认", () => {
-    expect(judge()).toMatchObject({ category: "有給休暇", flags: ["休假待确认"] });
+  it("无活动工作日保持类别为空，等待本人补录", () => {
+    expect(judge()).toMatchObject({ category: null, flags: ["待补录"] });
   });
   it("当前日只标进行中，未来日不计算", () => {
     expect(judge([], [], { now: ts("2026-10-07 12:00:00") })).toMatchObject({ category: null, status: "ongoing", flags: [] });

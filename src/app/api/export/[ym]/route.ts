@@ -12,7 +12,7 @@ export async function POST(request: Request, context: { params: Promise<{ ym: st
     const {ym}=await context.params;parseYm(ym);
     const body=await request.json();
     const result=await withDbAsync(db=>exportMonth(db,ym,{force:body.force===true,lock:body.lock===true}));
-    return Response.json({url:`/api/export/${ym}`,name:result.name,warnings:[]});
+    return Response.json({url:`/api/export/${ym}`,name:result.name,warnings:[],revision:result.revision});
   } catch(error) {
     if(error instanceof ExportBlocked)return Response.json({error:error.message,warnings:error.errors.length ? [] : error.warnings},{status:409});
     return Response.json({error:error instanceof Error ? error.message : "生成失败"},{status:400});

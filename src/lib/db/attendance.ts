@@ -1,6 +1,6 @@
 import { nowSec, parseDate, parseYm, hhmmToMinutes } from "../time";
 import { computeMonth } from "../judge/month";
-import { CATEGORIES, type Category } from "../judge/types";
+import { CATEGORIES, type Category, type DayResult } from "../judge/types";
 import { getSetting, transaction, type Db } from "./index";
 import type { CollectorState } from "../collector-state";
 
@@ -52,13 +52,19 @@ export function restoreAuto(db: Db, date: string, now = nowSec()): void {
     }
   });
 }
+function confirmationError(day: DayResult): string | undefined {
+  if (day.status !== "past") return "业务日尚未结束，暂时不能确认";
+  if (!day.category && (!day.is_rest_day || day.clock_in || day.clock_out)) return "请先补录并选择考勤类别";
+  if (day.flags.includes("跨零点")) return "请先处理跨零点时间";
+  if (day.flags.includes("地点未知")) return "请先选择到岗或居家";
+  if (day.category && ["出勤", "在宅", "休日出勤"].includes(day.category) && (!day.clock_in || !day.clock_out)) return "请先补齐上下班时间";
+}
 export function confirmDay(db: Db, date: string, now = nowSec()): void {
   parseDate(date);
+  assertUnlocked(db, date.slice(0, 7));
   const day = computeMonth(db, date.slice(0, 7), now).find(d => d.date === date)!;
-  if (day.status !== "past") throw new Error("业务日尚未结束，暂时不能确认");
-  if (day.flags.includes("跨零点")) throw new Error("请先处理跨零点时间");
-  if (day.flags.includes("地点未知")) throw new Error("请先选择到岗或居家");
-  if (day.category && ["出勤", "在宅", "休日出勤"].includes(day.category) && (!day.clock_in || !day.clock_out)) throw new Error("请先补齐上下班时间");
+  const error = confirmationError(day);
+  if (error) throw new Error(error);
   transaction(db, () => {
     assertUnlocked(db, date.slice(0, 7));
     db.prepare("INSERT INTO day_meta (date, confirmed_at) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET confirmed_at=excluded.confirmed_at").run(date, now);
@@ -71,7 +77,7 @@ export function confirmCleanDays(db: Db, ym: string, now = nowSec()): number {
     assertUnlocked(db, ym);
     let count = 0;
     for (const day of days) {
-      if (day.status !== "past" || day.flags.length || day.confirmed_at) continue;
+      if (confirmationError(day) || day.flags.length || day.confirmed_at) continue;
       db.prepare("INSERT INTO day_meta (date, confirmed_at) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET confirmed_at=excluded.confirmed_at").run(day.date, now);
       audit(db, day.date, "confirmed_at", null, now, now); count++;
     }

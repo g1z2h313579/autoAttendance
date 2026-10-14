@@ -21,6 +21,12 @@ export function mergeManual(db: Db, day: DayResult): DayResult {
   const meta = db.prepare("SELECT note, confirmed_at FROM day_meta WHERE date = ?").get(day.date) as { note: string | null; confirmed_at: number | null } | undefined;
   if (!manual) return { ...day, ...meta, manual: false };
   const flags = day.flags.filter(f => !["地点未知", "休假待确认", "休息日上班待确认", "工时过短", "跨零点", "缺少结束事件", "下班待核对"].includes(f));
+  if (manual.category) {
+    const pending = flags.indexOf("待补录");
+    if (pending !== -1) flags.splice(pending, 1);
+  } else if (day.status === "past" && !day.is_rest_day && !flags.includes("待补录")) {
+    flags.push("待补录");
+  }
   if (manual.clock_in && manual.clock_out) {
     if (manual.clock_out < manual.clock_in) flags.push("跨零点");
     else if ((Number(manual.clock_out.slice(0, 2)) * 60 + Number(manual.clock_out.slice(3))) -

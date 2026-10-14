@@ -40,7 +40,7 @@ export function judgeActivityDay(input: JudgeInput): DayResult {
   if (backfilled.length) result.flags.push("含补录");
   if (!rest) {
     if (!first) {
-      if (status === "past") { result.category = "有給休暇"; result.flags.push("休假待确认"); }
+      if (status === "past") result.flags.push("待补录");
     } else if (result.source === "pmset") result.flags.push("地点未知");
     else result.category = result.office_min >= settings.officeMinMinutes ? "出勤" : "在宅";
     const unknown = new Set(networks.filter(n => !n.label).map(n => n.gateway_mac));
@@ -89,7 +89,7 @@ export function judgeDay(input: JudgeInput): DayResult {
     // 旧版本保存的操作采样仍可用于历史首尾；新网络快照没有 idle_sec，不制造工作。
     const legacy = judgeActivityDay({ ...input, events: [] });
     if (!legacy.sessions.length) {
-      if (!rest && status === "past") { result.category = "有給休暇"; result.flags.push("休假待确认"); }
+      if (!rest && status === "past") result.flags.push("待补录");
       return result;
     }
     first = legacy.sessions[0].start;

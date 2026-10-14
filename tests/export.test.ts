@@ -90,7 +90,7 @@ describe("导出前检查", () => {
   });
   it("类别或时间缺失不能生成看似完整的工作日", () => {
     expect(exportChecks([{...day,clock_out:null}]).errors[0]).toContain("时间");
-    expect(exportChecks([{...day,category:null}]).warnings[0]).toContain("类别");
+    expect(exportChecks([{...day,category:null}]).errors[0]).toContain("类别");
   });
 });
 

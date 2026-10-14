@@ -8,7 +8,7 @@ describe("人工编辑与确认", () => {
   it("只改备注不会创建人工考勤，修改时间会记录历史", () => {
     const db = openDb(":memory:");
     try {
-      saveDay(db, "2026-10-07", { category: "有給休暇", clock_in: null, clock_out: null, note: "待核实" }, now);
+      saveDay(db, "2026-10-07", { category: null, clock_in: null, clock_out: null, note: "待核实" }, now);
       expect(db.prepare("SELECT count(*) AS n FROM day_manual").get()).toMatchObject({ n: 0 });
       saveDay(db, "2026-10-07", { category: "出勤", clock_in: "09:30", clock_out: "18:30", note: "已补录" }, now);
       expect(computeMonth(db, "2026-10", now)[6]).toMatchObject({ category: "出勤", clock_in: "09:30", manual: true });
@@ -28,7 +28,7 @@ describe("人工编辑与确认", () => {
       expect(() => saveDay(db, "2026-09-01", { category: null, clock_in: null, clock_out: null, note: "" }, now)).not.toThrow();
     } finally { db.close(); }
   });
-  it("一键确认不会确认缺数据休假、当前日和未来日", () => {
+  it("一键确认不会确认待补录日期、当前日和未来日", () => {
     const db = openDb(":memory:");
     try {
       confirmCleanDays(db, "2026-10", now);
